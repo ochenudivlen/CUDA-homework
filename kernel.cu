@@ -10,8 +10,11 @@
 #include <iomanip>
 #include <random>
 
-//Размер блока
-#define BLOCK_SIZE 2
+//Количество потоков в блоке
+#define blockDim 2
+
+//Количество блоков в сетке
+#define blocksPerGrid 2
 
 //Тип, который будут иметь элементы матриц
 #define BASE_TYPE double
@@ -28,26 +31,23 @@ int toMultiple(int a, int b)
     return a;
 }
 
-__device__ void colon(BASE_TYPE* A, BASE_TYPE* I, const int Arows, const int Acols, const int n, const int m)
+__device__ void colon(BASE_TYPE* A, BASE_TYPE* I, const int Arows, const int Acols, const int n)
 {
     BASE_TYPE ratio = 0;
 
-    for (int i = 0; i < Arows; i++)
+    if (blockIdx.x != n)
     {
-        if (i != n)
+        if (A[n * Acols + n] != 0)
         {
-            if (A[n * Acols + n] != 0)
-            {
-                ratio = A[i * Acols + n] / A[n * Acols + n];
-            }
-            else
-            {
-                return;
-            }
-
-            A[i * Acols + threadIdx.x] -= A[n * Acols + threadIdx.x] * ratio;
-            I[i * Acols + threadIdx.x] -= I[n * Acols + threadIdx.x] * ratio;
+            ratio = A[blockIdx.x * Acols + n] / A[n * Acols + n];
         }
+        else
+        {
+            return;
+        }
+
+        A[blockIdx.x * Acols + threadIdx.x] -= A[n * Acols + threadIdx.x] * ratio;
+        I[blockIdx.x * Acols + threadIdx.x] -= I[n * Acols + threadIdx.x] * ratio;
     }
 }
 
@@ -56,16 +56,13 @@ __global__ void inverseMatrix(BASE_TYPE* A, BASE_TYPE* I, const int Arows, const
 {
     for (int i = 0; i < Arows; i++)
     {
-        colon(A, I, Arows, Acols, i, threadIdx.x);
+        colon(A, I, Arows, Acols, i);
     }
 
-    for (int i = 0; i < Arows; i++)
-    {
-        BASE_TYPE t = A[i * Acols + i];
+    BASE_TYPE t = A[blockIdx.x * Acols + blockIdx.x];
 
-        A[i * Acols + threadIdx.x] /= t;
-        I[i * Acols + threadIdx.x] /= t;
-    }
+    A[blockIdx.x * Acols + threadIdx.x] /= t;
+    I[blockIdx.x * Acols + threadIdx.x] /= t;
 }
 
 int main()
@@ -79,10 +76,10 @@ int main()
     int Arows = 1;
     int Acols = 1;
 
-    Arows = toMultiple(Arows, BLOCK_SIZE);
+    Arows = toMultiple(Arows, blockDim);
     printf("Arows = %d\n", Arows);
 
-    Acols = toMultiple(Acols, BLOCK_SIZE);
+    Acols = toMultiple(Acols, blockDim);
     printf("Acols = %d\n\n", Acols);
 
     //Проверка матрицы на квадратность
@@ -154,12 +151,9 @@ int main()
     cudaMemcpy(d_A, h_A, Asize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_I, h_I, Asize, cudaMemcpyHostToDevice);
 
-    //dim3 threadsPerBlock = dim3(BLOCK_SIZE, BLOCK_SIZE);
-    //dim3 blocksPerGrid = 1;
-
     cudaEventRecord(start, 0);
 
-    inverseMatrix<<<1, BLOCK_SIZE>>>(d_A, d_I, Arows, Acols);
+    inverseMatrix<<<blocksPerGrid, blockDim>>>(d_A, d_I, Arows, Acols);
 
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
